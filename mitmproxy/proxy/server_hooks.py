@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from . import commands
 from mitmproxy import connection
+from mitmproxy import headspin
 
 
 @dataclass
@@ -74,3 +75,32 @@ class ServerConnectErrorHook(commands.StartHook):
     """
 
     data: ServerConnectionHookData
+
+
+@dataclass
+class TlsExceptionHook(commands.StartHook):
+    """
+    HeadSpin: TLS handshake failed for a named host.
+
+    Addons may set ``event.keep_in_session`` to keep the host in the capture session.
+    Otherwise the host is added to ``ignore_hosts`` for TCP passthrough.
+    """
+
+    event: headspin.TlsExceptionEvent
+
+
+TlsExceptionHook.name = "tlsexception"
+
+
+@dataclass
+class ProtocolExceptionHook(commands.StartHook):
+    """
+    HeadSpin: a protocol or connection error occurred for a server.
+
+    Addons may set ``event.keep_in_session`` to keep the host in the capture session.
+    """
+
+    event: headspin.ProtocolExceptionEvent
+
+
+ProtocolExceptionHook.name = "protocolexception"
