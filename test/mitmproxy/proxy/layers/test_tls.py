@@ -8,12 +8,14 @@ import pytest
 from OpenSSL import SSL
 
 from mitmproxy import connection
+from mitmproxy import headspin
 from mitmproxy.connection import ConnectionState
 from mitmproxy.connection import Server
 from mitmproxy.proxy import commands
 from mitmproxy.proxy import context
 from mitmproxy.proxy import events
 from mitmproxy.proxy import layer
+from mitmproxy.proxy import server_hooks
 from mitmproxy.proxy.layers import tls
 from mitmproxy.tls import ClientHelloData
 from mitmproxy.tls import TlsData
@@ -365,6 +367,7 @@ class TestServerTLS:
             tssl.do_handshake()
 
         tls_hook_data = tutils.Placeholder(TlsData)
+        tls_exception_event = tutils.Placeholder(headspin.TlsExceptionEvent)
         assert (
             playbook
             >> events.DataReceived(tctx.server, tssl.bio_read())
@@ -375,6 +378,8 @@ class TestServerTLS:
                 ),
                 WARNING,
             )
+            << server_hooks.TlsExceptionHook(tls_exception_event)
+            >> tutils.reply()
             << tls.TlsFailedServerHook(tls_hook_data)
             >> tutils.reply()
             << commands.CloseConnection(tctx.server)
@@ -386,11 +391,66 @@ class TestServerTLS:
                 ),
             )
         )
+        assert tls_exception_event().named_address == (
+            "wrong.host.mitmproxy.org",
+            443,
+        )
+        assert "wrong[.]host[.]mitmproxy[.]org:443" in tctx.options.ignore_hosts
         assert (
             tls_hook_data().conn.error.lower()
             == "Certificate verify failed: Hostname mismatch".lower()
         )
         assert not tctx.server.tls_established
+
+    def test_untrusted_cert_keep_in_session(self, tctx):
+        """tlsexception keep_in_session must not add host to ignore_hosts."""
+        playbook = tutils.Playbook(tls.ServerTLSLayer(tctx))
+        tctx.server.address = ("wrong.host.mitmproxy.org", 443)
+        tctx.server.sni = "wrong.host.mitmproxy.org"
+
+        tssl = SSLTest(server_side=True)
+        data = tutils.Placeholder(bytes)
+        assert (
+            playbook
+            >> events.DataReceived(tctx.client, b"open-connection")
+            << layer.NextLayerHook(tutils.Placeholder())
+            >> tutils.reply_next_layer(TlsEchoLayer)
+            << commands.OpenConnection(tctx.server)
+            >> tutils.reply(None)
+            << tls.TlsStartServerHook(tutils.Placeholder())
+            >> reply_tls_start_server()
+            << commands.SendData(tctx.server, data)
+        )
+
+        tssl.bio_write(data())
+        with pytest.raises(ssl.SSLWantReadError):
+            tssl.do_handshake()
+
+        tls_exception_event = tutils.Placeholder(headspin.TlsExceptionEvent)
+        assert (
+            playbook
+            >> events.DataReceived(tctx.server, tssl.bio_read())
+            << commands.Log(
+                StrMatching(
+                    "Server TLS handshake failed. Certificate verify failed: [Hh]ostname mismatch"
+                ),
+                WARNING,
+            )
+            << server_hooks.TlsExceptionHook(tls_exception_event)
+            >> tutils.reply(
+                side_effect=lambda event: setattr(event, "keep_in_session", True)
+            )
+            << tls.TlsFailedServerHook(tutils.Placeholder())
+            >> tutils.reply()
+            << commands.CloseConnection(tctx.server)
+            << commands.SendData(
+                tctx.client,
+                BytesMatching(
+                    b"open-connection failed: Certificate verify failed: [Hh]ostname mismatch"
+                ),
+            )
+        )
+        assert tctx.options.ignore_hosts == []
 
     def test_remote_speaks_no_tls(self, tctx):
         playbook = tutils.Playbook(tls.ServerTLSLayer(tctx))
@@ -400,6 +460,7 @@ class TestServerTLS:
         # send ClientHello, receive random garbage back
         data = tutils.Placeholder(bytes)
         tls_hook_data = tutils.Placeholder(TlsData)
+        tls_exception_event = tutils.Placeholder(headspin.TlsExceptionEvent)
         assert (
             playbook
             << tls.TlsStartServerHook(tutils.Placeholder())
@@ -410,10 +471,14 @@ class TestServerTLS:
                 "Server TLS handshake failed. The remote server does not speak TLS.",
                 WARNING,
             )
+            << server_hooks.TlsExceptionHook(tls_exception_event)
+            >> tutils.reply()
             << tls.TlsFailedServerHook(tls_hook_data)
             >> tutils.reply()
             << commands.CloseConnection(tctx.server)
         )
+        assert tls_exception_event().named_address == ("example.mitmproxy.org", 443)
+        assert "example[.]mitmproxy[.]org:443" in tctx.options.ignore_hosts
         assert tls_hook_data().conn.error == "The remote server does not speak TLS."
 
     def test_unsupported_protocol(self, tctx: context.Context):
