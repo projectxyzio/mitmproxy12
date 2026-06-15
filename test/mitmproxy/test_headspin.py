@@ -1,7 +1,11 @@
 from mitmproxy import headspin
+from mitmproxy.addons.next_layer import NextLayer
 from mitmproxy.connection import Client
 from mitmproxy.options import Options
 from mitmproxy.proxy.context import Context
+from mitmproxy.proxy.layers import TCPLayer
+from mitmproxy.proxy.layers import modes
+from mitmproxy.test import taddons
 
 
 def test_exclude_host_from_session():
@@ -59,3 +63,44 @@ def test_protocol_exception_event():
     assert event.server_address == ("host", 443)
     assert event.e is exc
     assert event.keep_in_session is False
+
+
+def test_smart_ignore_enables_next_layer_passthrough():
+    """After tlsexception exclude, NextLayer should TCP-passthrough the host."""
+    nl = NextLayer()
+    with taddons.context(nl) as tctx:
+        client = Client(
+            peername=("127.0.0.1", 12345),
+            sockname=("127.0.0.1", 8080),
+            timestamp_start=0,
+            sni="example.com",
+        )
+        ctx = Context(client, tctx.options)
+        ctx.layers.append(modes.TransparentProxy(ctx))
+        ctx.server.address = ("93.184.216.34", 443)
+        ctx.server.peername = ("93.184.216.34", 443)
+
+        assert nl._ignore_connection(ctx, b"", b"") is False
+
+        headspin.exclude_host_from_session(ctx, ("example.com", 443))
+        assert nl._ignore_connection(ctx, b"", b"") is True
+
+        layer = nl._next_layer(ctx, b"", b"")
+        assert isinstance(layer, TCPLayer)
+        assert layer.flow is None
+
+
+def test_smart_ignore_matches_server_address_pattern():
+    nl = NextLayer()
+    with taddons.context(nl) as tctx:
+        client = Client(
+            peername=("127.0.0.1", 12345),
+            sockname=("127.0.0.1", 8080),
+            timestamp_start=0,
+        )
+        ctx = Context(client, tctx.options)
+        ctx.server.address = ("bad.example.com", 443)
+        ctx.server.peername = ("10.0.0.1", 443)
+
+        headspin.exclude_host_from_session(ctx, ("bad.example.com", 443))
+        assert nl._ignore_connection(ctx, b"", b"") is True
