@@ -501,6 +501,7 @@ class Http2Client(Http2Connection):
         self.our_stream_id = {}
         self.their_stream_id = {}
         self.stream_queue = collections.defaultdict(list)
+        self.outbound_requests: dict[int, http.Request] = {}
 
     def _handle_event(self, event: Event) -> CommandGenerator[None]:
         # We can't reuse stream ids from the client because they may arrived reordered here
@@ -567,6 +568,7 @@ class Http2Client(Http2Connection):
                 yield RequestWakeup(self.context.options.http2_ping_keepalive)
             yield from super()._handle_event(event)
         elif isinstance(event, RequestHeaders):
+            self.outbound_requests[event.stream_id] = event.request
             event.request.hs_timestamp_start = time.time()
             self.h2_conn.send_headers(
                 event.stream_id,
@@ -576,6 +578,15 @@ class Http2Client(Http2Connection):
             event.request.hs_timestamp_end = time.time()
             self.streams[event.stream_id] = StreamState.EXPECTING_HEADERS
             yield SendData(self.conn, self.h2_conn.data_to_send())
+        elif isinstance(event, RequestData):
+            yield from super()._handle_event(event)
+            if request := self.outbound_requests.get(event.stream_id):
+                if event.data:
+                    request.hs_timestamp_end = time.time()
+        elif isinstance(event, RequestEndOfMessage):
+            yield from super()._handle_event(event)
+            if request := self.outbound_requests.pop(event.stream_id, None):
+                request.hs_timestamp_end = time.time()
         else:
             yield from super()._handle_event(event)
 
