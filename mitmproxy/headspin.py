@@ -44,14 +44,12 @@ def exclude_host_from_session(context: Context, named_address: tuple[str, int]) 
     pattern = _host_pattern(named_address)
     logger.info("Ignoring %s from the session.", pattern)
     opts = context.options
-    allow_hosts = list(opts.allow_hosts)
-    if allow_hosts:
-        # allow-list mode: assume named_address is not on the list.
+    if opts.allow_hosts:
+        # allow-list mode: only listed hosts are intercepted.
         return
     ignore_hosts = list(opts.ignore_hosts)
-    if opts.ignore_hosts and opts.tcp_hosts:
-        # "tcp" mode — hosts matching tcp_hosts are passed through.
-        pass
+    if pattern in ignore_hosts:
+        return
     ignore_hosts.append(pattern)
     opts.update(ignore_hosts=ignore_hosts)
 
@@ -59,3 +57,12 @@ def exclude_host_from_session(context: Context, named_address: tuple[str, int]) 
 def keep_host_in_session(context: Context, named_address: tuple[str, int]) -> None:
     pattern = f"{named_address[0]}:{named_address[1]}"
     logger.info("Keeping %s in the session.", pattern)
+
+
+def apply_host_policy(
+    context: Context, named_address: tuple[str, int], keep_in_session: bool
+) -> None:
+    if keep_in_session:
+        keep_host_in_session(context, named_address)
+    else:
+        exclude_host_from_session(context, named_address)

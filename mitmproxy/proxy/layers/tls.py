@@ -20,6 +20,7 @@ from mitmproxy.proxy import commands
 from mitmproxy.proxy import context
 from mitmproxy.proxy import events
 from mitmproxy.proxy import layer
+from mitmproxy.proxy import server_hooks
 from mitmproxy.proxy import tunnel
 from mitmproxy.proxy.commands import StartHook
 from mitmproxy.proxy.layers import tcp
@@ -238,34 +239,6 @@ class TlsFailedServerHook(StartHook):
     """
 
     data: TlsData
-
-
-@dataclass
-class TlsExceptionHook(StartHook):
-    """
-    HeadSpin: server TLS handshake failed for a named host.
-
-    Addons may set `event.keep_in_session` to keep the host in the capture session.
-    """
-
-    event: headspin.TlsExceptionEvent
-
-
-TlsExceptionHook.name = "tlsexception"
-
-
-@dataclass
-class ProtocolExceptionHook(StartHook):
-    """
-    HeadSpin: a protocol error occurred for a server connection.
-
-    Addons may set `event.keep_in_session` to keep the host in the capture session.
-    """
-
-    event: headspin.ProtocolExceptionEvent
-
-
-ProtocolExceptionHook.name = "protocolexception"
 
 
 class TLSLayer(tunnel.TunnelLayer):
@@ -548,11 +521,10 @@ class ServerTLSLayer(TLSLayer):
         named_address = self._named_address()
         if named_address:
             event = headspin.TlsExceptionEvent(named_address)
-            yield TlsExceptionHook(event)
-            if event.keep_in_session:
-                headspin.keep_host_in_session(self.context, named_address)
-            else:
-                headspin.exclude_host_from_session(self.context, named_address)
+            yield server_hooks.TlsExceptionHook(event)
+            headspin.apply_host_policy(
+                self.context, named_address, event.keep_in_session
+            )
         yield from super().on_handshake_error(err)
 
 
