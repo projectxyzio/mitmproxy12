@@ -143,6 +143,9 @@ def test_simple(tctx):
     )
     assert flow().request.url == "http://example.com/"
     assert flow().response.text == "Hello, World!"
+    assert flow().request.hs_timestamp_start is not None
+    assert flow().request.hs_timestamp_end is not None
+    assert flow().request.hs_timestamp_end >= flow().request.hs_timestamp_start
 
 
 @pytest.mark.parametrize("stream", ["stream", ""])
