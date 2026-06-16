@@ -71,6 +71,10 @@ async def test_open_connection(result, monkeypatch):
     assert server_connected.called == (result == "success")
     assert server_connect_error.called == (result != "success")
 
+    if result == "success":
+        conn = server_connected.call_args[0][0].server
+        assert conn.timestamp_tcp_setup is not None
+
     assert server_disconnected.called == (result == "success")
     assert protocol_exception.called == (result == "failed")
     if result == "failed":
