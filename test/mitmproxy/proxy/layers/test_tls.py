@@ -791,6 +791,7 @@ class TestClientTLS:
             tssl_client.do_handshake()
         # Finish Handshake
         tls_hook_data = tutils.Placeholder(TlsData)
+        tls_exception_event = tutils.Placeholder(headspin.TlsExceptionEvent)
         assert (
             playbook
             >> events.DataReceived(tctx.client, tssl_client.bio_read())
@@ -801,6 +802,8 @@ class TestClientTLS:
                 ),
                 WARNING,
             )
+            << server_hooks.TlsExceptionHook(tls_exception_event)
+            >> tutils.reply()
             << tls.TlsFailedClientHook(tls_hook_data)
             >> tutils.reply()
             << commands.CloseConnection(tctx.client)
@@ -808,6 +811,8 @@ class TestClientTLS:
         )
         assert not tctx.client.tls_established
         assert tls_hook_data().conn.error
+        assert tls_exception_event().named_address == ("wrong.host.mitmproxy.org", 443)
+        assert "wrong[.]host[.]mitmproxy[.]org:443" in tctx.options.ignore_hosts
 
     @pytest.mark.parametrize(
         "close_at", ["tls_clienthello", "tls_start_client", "handshake"]
@@ -821,6 +826,7 @@ class TestClientTLS:
         )
         playbook.logs = True
         tls_hook_data = tutils.Placeholder(TlsData)
+        tls_exception_event = tutils.Placeholder(headspin.TlsExceptionEvent)
 
         playbook >> events.DataReceived(tctx.client, tssl_client.bio_read())
         playbook << tls.TlsClienthelloHook(tutils.Placeholder())
@@ -864,11 +870,14 @@ class TestClientTLS:
                 "If this happens consistently for wrong.host.mitmproxy.org, this may indicate that the "
                 "client does not trust the proxy's certificate."
             )
+            << server_hooks.TlsExceptionHook(tls_exception_event)
+            >> tutils.reply()
             << tls.TlsFailedClientHook(tls_hook_data)
             >> tutils.reply()
             << commands.CloseConnection(tctx.client)
         )
         assert tls_hook_data().conn.error
+        assert tls_exception_event().named_address == ("wrong.host.mitmproxy.org", 443)
 
     def test_unsupported_protocol(self, tctx: context.Context):
         """Test the scenario where the client only supports an outdated TLS version by default."""
