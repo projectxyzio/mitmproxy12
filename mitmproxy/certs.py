@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Note that expiry will be offset by `CERT_VALIDITY_OFFSET`, i.e. the cert will be
 # backdated a bit to account for clients with incorrect clocks.
 CA_EXPIRY = datetime.timedelta(days=10 * 365)
-CERT_EXPIRY = datetime.timedelta(days=199)
+CERT_EXPIRY = datetime.timedelta(days=365)
 CRL_EXPIRY = datetime.timedelta(days=7)
 
 CERT_VALIDITY_OFFSET = datetime.timedelta(days=-2)
