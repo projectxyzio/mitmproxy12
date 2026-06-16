@@ -143,6 +143,9 @@ class TestClient:
             << SendData(tctx.server, b"GET / HTTP/1.1\r\ncontent-length: 0\r\n\r\n")
         )
         assert resp().response.status_code == 200
+        assert req.hs_timestamp_start is not None
+        assert req.hs_timestamp_end is not None
+        assert req.hs_timestamp_end >= req.hs_timestamp_start
 
     def test_connect(self, tctx):
         req = http.Request.make("CONNECT", "http://example.com:443")
