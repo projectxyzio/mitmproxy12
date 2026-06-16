@@ -229,7 +229,9 @@ class ConnectionHandler(metaclass=abc.ABCMeta):
                 self.log(f"error establishing server connection: {err}")
                 command.connection.error = err
                 await self.handle_hook(server_hooks.ServerConnectErrorHook(hook_data))
-                if command.connection.address:
+                if command.connection.address and not isinstance(
+                    e, asyncio.CancelledError
+                ):
                     await self._handle_protocol_exception(
                         command.connection.address, e
                     )
