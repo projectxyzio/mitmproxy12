@@ -814,6 +814,50 @@ class TestClientTLS:
         assert tls_exception_event().named_address == ("wrong.host.mitmproxy.org", 443)
         assert "wrong[.]host[.]mitmproxy[.]org:443" in tctx.options.ignore_hosts
 
+    def test_mitmproxy_ca_is_untrusted_keep_in_session(self, tctx: context.Context):
+        """Client-side tlsexception keep_in_session must not add host to ignore_hosts."""
+        playbook, client_layer, tssl_client = make_client_tls_layer(
+            tctx, sni=b"wrong.host.mitmproxy.org"
+        )
+        playbook.logs = True
+
+        data = tutils.Placeholder(bytes)
+        assert (
+            playbook
+            >> events.DataReceived(tctx.client, tssl_client.bio_read())
+            << tls.TlsClienthelloHook(tutils.Placeholder())
+            >> tutils.reply()
+            << tls.TlsStartClientHook(tutils.Placeholder())
+            >> reply_tls_start_client()
+            << commands.SendData(tctx.client, data)
+        )
+        tssl_client.bio_write(data())
+        with pytest.raises(ssl.SSLCertVerificationError):
+            tssl_client.do_handshake()
+
+        tls_exception_event = tutils.Placeholder(headspin.TlsExceptionEvent)
+        assert (
+            playbook
+            >> events.DataReceived(tctx.client, tssl_client.bio_read())
+            << commands.Log(
+                tutils.StrMatching(
+                    "Client TLS handshake failed. The client does not trust the proxy's certificate "
+                    "for wrong.host.mitmproxy.org"
+                ),
+                WARNING,
+            )
+            << server_hooks.TlsExceptionHook(tls_exception_event)
+            >> tutils.reply(
+                side_effect=lambda event: setattr(event, "keep_in_session", True)
+            )
+            << tls.TlsFailedClientHook(tutils.Placeholder())
+            >> tutils.reply()
+            << commands.CloseConnection(tctx.client)
+            >> events.ConnectionClosed(tctx.client)
+        )
+        assert tls_exception_event().named_address == ("wrong.host.mitmproxy.org", 443)
+        assert tctx.options.ignore_hosts == []
+
     @pytest.mark.parametrize(
         "close_at", ["tls_clienthello", "tls_start_client", "handshake"]
     )
