@@ -1,7 +1,10 @@
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from . import commands
 from mitmproxy import connection
+from mitmproxy import headspin
+from mitmproxy.proxy import context
 
 
 @dataclass
@@ -74,3 +77,45 @@ class ServerConnectErrorHook(commands.StartHook):
     """
 
     data: ServerConnectionHookData
+
+
+@dataclass
+class TlsExceptionHook(commands.StartHook):
+    """
+    HeadSpin: TLS handshake failed for a named host.
+
+    Addons may set ``event.keep_in_session`` to keep the host in the capture session.
+    Otherwise the host is added to ``ignore_hosts`` for TCP passthrough.
+    """
+
+    event: headspin.TlsExceptionEvent
+
+
+TlsExceptionHook.name = "tlsexception"
+
+
+@dataclass
+class ProtocolExceptionHook(commands.StartHook):
+    """
+    HeadSpin: a protocol or connection error occurred for a server.
+
+    Addons may set ``event.keep_in_session`` to keep the host in the capture session.
+    """
+
+    event: headspin.ProtocolExceptionEvent
+
+
+ProtocolExceptionHook.name = "protocolexception"
+
+
+def fire_protocolexception(
+    ctx: context.Context,
+    server_address: tuple[str, int] | None,
+    exc: BaseException,
+) -> Iterator[ProtocolExceptionHook]:
+    """Fire HeadSpin protocolexception hook and apply smart-ignore host policy."""
+    if not server_address:
+        return
+    event = headspin.ProtocolExceptionEvent(server_address, exc)
+    yield ProtocolExceptionHook(event)
+    headspin.apply_host_policy(ctx, server_address, event.keep_in_session)

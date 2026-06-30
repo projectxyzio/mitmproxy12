@@ -123,9 +123,21 @@ def test_upgrade(tctx):
     assert flow().websocket.messages[0].content == b"hello world"
     assert flow().websocket.messages[0].from_client
     assert flow().websocket.messages[0].type == Opcode.TEXT
+    assert flow().websocket.messages[0].hs_timestamp_start is not None
+    assert flow().websocket.messages[0].hs_timestamp_end is not None
+    assert (
+        flow().websocket.messages[0].hs_timestamp_end
+        >= flow().websocket.messages[0].hs_timestamp_start
+    )
     assert flow().websocket.messages[1].content == b"hello back"
     assert flow().websocket.messages[1].from_client is False
     assert flow().websocket.messages[1].type == Opcode.BINARY
+    assert flow().websocket.messages[1].hs_timestamp_start is not None
+    assert flow().websocket.messages[1].hs_timestamp_end is not None
+    assert (
+        flow().websocket.messages[1].hs_timestamp_end
+        >= flow().websocket.messages[1].hs_timestamp_start
+    )
     assert flow().live
 
 

@@ -39,6 +39,7 @@ async def test_open_connection(result, monkeypatch):
     server_connected = handler.hook_handlers["server_connected"]
     server_connect_error = handler.hook_handlers["server_connect_error"]
     server_disconnected = handler.hook_handlers["server_disconnected"]
+    protocol_exception = handler.hook_handlers["protocolexception"]
 
     match result:
         case "success":
@@ -70,7 +71,54 @@ async def test_open_connection(result, monkeypatch):
     assert server_connected.called == (result == "success")
     assert server_connect_error.called == (result != "success")
 
+    if result == "success":
+        conn = server_connected.call_args[0][0].server
+        assert conn.timestamp_tcp_setup is not None
+
     assert server_disconnected.called == (result == "success")
+    assert protocol_exception.called == (result == "failed")
+    if result == "failed":
+        event = protocol_exception.call_args[0][0]
+        assert event.server_address == ("server", 1234)
+        assert isinstance(event.e, OSError)
+        assert "server:1234" in handler.layer.context.options.ignore_hosts
+
+
+async def test_open_connection_protocolexception_keep_in_session(monkeypatch):
+    handler = MockConnectionHandler()
+    protocol_exception = handler.hook_handlers["protocolexception"]
+
+    def keep_in_session(event) -> None:
+        event.keep_in_session = True
+
+    protocol_exception.side_effect = keep_in_session
+    monkeypatch.setattr(
+        asyncio, "open_connection", mock.AsyncMock(side_effect=OSError("refused"))
+    )
+
+    await handler.open_connection(
+        commands.OpenConnection(connection=Server(address=("keep.example", 443)))
+    )
+
+    assert protocol_exception.called
+    assert handler.layer.context.options.ignore_hosts == []
+
+
+async def test_open_connection_cancelled_skips_protocolexception(monkeypatch):
+    handler = MockConnectionHandler()
+    protocol_exception = handler.hook_handlers["protocolexception"]
+    monkeypatch.setattr(
+        asyncio,
+        "open_connection",
+        mock.AsyncMock(side_effect=asyncio.CancelledError()),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await handler.open_connection(
+            commands.OpenConnection(connection=Server(address=("server", 443)))
+        )
+
+    assert not protocol_exception.called
 
 
 async def test_no_reentrancy(capsys):

@@ -20,6 +20,7 @@ from mitmproxy.proxy import commands
 from mitmproxy.proxy import context
 from mitmproxy.proxy import events
 from mitmproxy.proxy import layer
+from mitmproxy.proxy import server_hooks
 from mitmproxy.proxy import tunnel
 from mitmproxy.proxy.commands import StartHook
 from mitmproxy.proxy.layers import tcp
@@ -240,32 +241,37 @@ class TlsFailedServerHook(StartHook):
     data: TlsData
 
 
-@dataclass
-class TlsExceptionHook(StartHook):
-    """
-    HeadSpin: server TLS handshake failed for a named host.
-
-    Addons may set `event.keep_in_session` to keep the host in the capture session.
-    """
-
-    event: headspin.TlsExceptionEvent
-
-
-TlsExceptionHook.name = "tlsexception"
+def fire_tlsexception(
+    ctx: context.Context, named_address: tuple[str, int] | None
+) -> layer.CommandGenerator[None]:
+    """Fire HeadSpin tlsexception hook and apply smart-ignore host policy."""
+    if not named_address:
+        return
+    event = headspin.TlsExceptionEvent(named_address)
+    yield server_hooks.TlsExceptionHook(event)
+    headspin.apply_host_policy(ctx, named_address, event.keep_in_session)
 
 
-@dataclass
-class ProtocolExceptionHook(StartHook):
-    """
-    HeadSpin: a protocol error occurred for a server connection.
-
-    Addons may set `event.keep_in_session` to keep the host in the capture session.
-    """
-
-    event: headspin.ProtocolExceptionEvent
-
-
-ProtocolExceptionHook.name = "protocolexception"
+def tls_named_address(
+    ctx: context.Context,
+    *,
+    prefer_sni: bool = False,
+) -> tuple[str, int] | None:
+    """Resolve the host:port key used for smart ignore / tlsexception."""
+    if prefer_sni:
+        if ctx.client.sni:
+            port = ctx.server.address[1] if ctx.server.address else 443
+            return ctx.client.sni, port
+        if ctx.server.sni:
+            port = ctx.server.address[1] if ctx.server.address else 443
+            return ctx.server.sni, port
+    if ctx.server.address:
+        return ctx.server.address
+    if ctx.server.sni:
+        return ctx.server.sni, 443
+    if ctx.client.sni:
+        return ctx.client.sni, 443
+    return None
 
 
 class TLSLayer(tunnel.TunnelLayer):
@@ -537,22 +543,11 @@ class ServerTLSLayer(TLSLayer):
             yield from super().event_to_child(event)
 
     def _named_address(self) -> tuple[str, int] | None:
-        if self.context.server.address:
-            return self.context.server.address
-        if self.context.client.sni:
-            return self.context.client.sni, 443
-        return None
+        return tls_named_address(self.context)
 
     def on_handshake_error(self, err: str) -> layer.CommandGenerator[None]:
         yield commands.Log(f"Server TLS handshake failed. {err}", level=WARNING)
-        named_address = self._named_address()
-        if named_address:
-            event = headspin.TlsExceptionEvent(named_address)
-            yield TlsExceptionHook(event)
-            if event.keep_in_session:
-                headspin.keep_host_in_session(self.context, named_address)
-            else:
-                headspin.exclude_host_from_session(self.context, named_address)
+        yield from fire_tlsexception(self.context, self._named_address())
         yield from super().on_handshake_error(err)
 
 
@@ -715,6 +710,9 @@ class ClientTLSLayer(TLSLayer):
             err = f"The client may not trust the proxy's certificate for {dest} ({err})"
         if err != "connection closed early":
             yield commands.Log(f"Client TLS handshake failed. {err}", level=level)
+            yield from fire_tlsexception(
+                self.context, tls_named_address(self.context, prefer_sni=True)
+            )
         yield from super().on_handshake_error(err)
         self.event_to_child = self.errored  # type: ignore
 

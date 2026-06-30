@@ -25,6 +25,7 @@ from OpenSSL import SSL
 
 import mitmproxy_rs
 from mitmproxy import http
+from mitmproxy import headspin
 from mitmproxy import options as moptions
 from mitmproxy import tls
 from mitmproxy.connection import Address
@@ -228,6 +229,12 @@ class ConnectionHandler(metaclass=abc.ABCMeta):
                 self.log(f"error establishing server connection: {err}")
                 command.connection.error = err
                 await self.handle_hook(server_hooks.ServerConnectErrorHook(hook_data))
+                if command.connection.address and not isinstance(
+                    e, asyncio.CancelledError
+                ):
+                    await self._handle_protocol_exception(
+                        command.connection.address, e
+                    )
                 await self.server_event(events.OpenConnectionCompleted(command, err))
                 if isinstance(e, asyncio.CancelledError):
                     # From https://docs.python.org/3/library/asyncio-exceptions.html#asyncio.CancelledError:
@@ -366,6 +373,15 @@ class ConnectionHandler(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     async def handle_hook(self, hook: commands.StartHook) -> None:
         pass
+
+    async def _handle_protocol_exception(
+        self, server_address: tuple[str, int], exc: BaseException
+    ) -> None:
+        event = headspin.ProtocolExceptionEvent(server_address, exc)
+        await self.handle_hook(server_hooks.ProtocolExceptionHook(event))
+        headspin.apply_host_policy(
+            self.layer.context, server_address, event.keep_in_session
+        )
 
     def log(
         self,
