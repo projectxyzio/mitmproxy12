@@ -33,3 +33,6 @@ elif [ "$arch" = "Darwin" ]; then
 fi
 
 pip install -q -e "${CURR_DIR}"
+
+# HeadSpin capture addons (capture.py, upstream_socks_proxy.py) run inside mitm12.
+pip install -q 'requests>=2.25' 'PySocks>=1.7'
